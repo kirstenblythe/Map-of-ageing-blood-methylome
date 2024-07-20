@@ -1,3 +1,106 @@
+##### Perform EWAS of VMPs and age in each dataset ####
+#Use GSE197676 as example
+
+#set directory
+path = 'pvol/Preprocessing/Blood/GEO/GSE197676'
+setwd(path)
+
+library(tidyverse)
+library(limma)
+
+resid <- read.table("GSE197676_M_res.txt")
+pheno <- read.delim("GSE197676 Phenotypes.txt")
+
+design2 = model.matrix(~ age, pheno)
+
+#Identify non-normal CpGs and remove them
+shapirotest <- apply(as.matrix(resid),1,shapiro.test)
+pvals <- sapply(shapirotest,"[[",2)
+CpGs_to_keep <- names(pvals[pvals>1e-5])
+#Remove all sites with raw p-value < 1e-5 (edited) 
+resid <- resid[CpGs_to_keep,] 
+#353581 cpgs
+resid_B <- ilogit2(resid)
+
+#regression of M squared residuals 
+sigma2 <- rowSums(resid^2)/ncol(resid) #variance of the residuals
+w <- (resid^2) - sigma2
+w <- as.matrix(w)
+
+fit1 <- lmFit(w,
+              design2)
+fit2 <- eBayes(fit1)
+
+#run second regression with beta values to get the effect size and standard error in beta values
+sigma2_B <- rowSums(resid_B^2)/ncol(resid_B) #variance of the residuals
+w_B <- (resid_B^2) - sigma2_B
+w_B <- as.matrix(w_B)
+
+fit1_B <- lmFit(w_B,
+                design2)
+fit2_B <- eBayes(fit1_B)
+
+coef = "age"
+results <- topTable(fit2,
+                    coef=coef,
+                    number=Inf,
+                    p.value=1)
+results_B <- topTable(fit2_B,
+                      coef = coef,
+                      number = Inf, 
+                      p.value = 1)
+
+results$logFC <- results_B[rownames(results),"logFC"] #extract logFC in beta values
+SE <- fit2_B$sigma * fit2_B$stdev.unscaled #extract SE in beta values
+results$SE <- SE[rownames(results),coef]
+
+fitted <- fitted(fit2)
+fitted_sqrd <- rowSums(fitted^2)
+bp <- ncol(resid)*fitted_sqrd/rowSums(w^2)
+df <- fit2$rank -1
+chisq_pval = sapply(bp,pchisq,df=df,lower.tail = FALSE)
+chisq_pval <- as.data.frame(chisq_pval)
+results$chisq_pval <- chisq_pval[rownames(results),]
+TestStat <- as.data.frame(bp)
+names(TestStat)[names(TestStat) == "bp"] <- "TestStat"
+results$TestStat <- TestStat[rownames(results), ]
+
+TestStat["cg08319905",] #check that the columns have aligned correctly
+
+#format file for METAL
+results_BP <- tibble(CPG = rownames(results),
+                     ALLELE1 = rep(1,nrow(results)),
+                     ALLELE2 = rep(2,nrow(results)),
+                     TESTSTAT = results$TestStat,
+                     N = rep(ncol(w),nrow(w)),
+                     COEF = results$logFC,
+                     SE = results$SE,
+                     PVALUE = results$chisq_pval)
+
+#Save p-value histogram
+tiff('GSE197676_pvalhist_VMPs.tiff',
+     width =5,
+     height = 3,
+     units = 'in',
+     res = 200)
+ggplot(results_BP,
+       mapping = aes(x = PVALUE, binwidth = 20))+
+  labs(title="Distribution of raw p-values for age VMPs",
+       x="p-value")+
+  geom_histogram(color="darkblue",
+                 fill="lightblue")
+dev.off()
+
+#save the formatted file for the meta-analysis in METAL
+setwd("/pvol/EWAS/Blood/VMPs")
+write.table(results_BP,
+            file="GSE197676.tbl",
+            quote = FALSE,
+            row.names = FALSE,
+            col.names = TRUE,
+            sep="\t")
+
+#repeat for remaining datasets 
 #### formatting files for METAL ####
 
 #set working directory
