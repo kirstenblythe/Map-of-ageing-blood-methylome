@@ -1,3 +1,135 @@
+#### Perform EWAS in each blood dataset ####
+#using GSE197676 as example dataset
+#dataset has been preprocessed according to ChAMP pipeline
+
+#set directory
+path = 'pvol/Preprocessing/Blood/GEO/GSE197676'
+setwd(path)
+
+lbrary(tidyverse)
+library(limma)
+
+#Identify DMPs in each dataset
+
+create_summary <- function(toptable = NULL,
+                           dataset_label = NULL,
+                           directory = getwd())
+{
+  CPG <- rownames(toptable)
+  ALLELE1 <- rep(1,nrow(toptable))
+  ALLELE2 <- rep(2,nrow(toptable))
+  TESTSTAT <- toptable$t
+  PVALUE <- toptable$P.Value
+  EFFECTSIZE <- toptable$logFC
+  SE <- toptable$SE
+  results = data.frame(CPG,
+                       ALLELE1,l
+                       ALLELE2,
+                       TESTSTAT,
+                       PVALUE,
+                       EFFECTSIZE,
+                       SE)
+  write.table(results,
+              file=paste0(directory,"/",dataset_label,".tbl"),
+              quote = FALSE,
+              row.names = FALSE,
+              col.names = TRUE,
+              sep="\t")
+}
+
+#load the data
+
+B <- B <- data.table::fread("GSE197676 beta after normalisation and batch correction.txt")
+B <- as.data.frame(B)
+rownames(B) <- B$V1
+B <- B %>% select(-V1)
+M <- logit2(B)
+pheno <- read.delim("GSE197676 Phenotypes.txt")
+glimpse(pheno)
+
+#run linear model including the dataset specific covariates (Supplementary Table 1)
+design=model.matrix(~age +
+                      sex,
+                    pheno)
+
+#first run the linear model on the M values
+fit1_M <- lmFit(M,
+                design)
+fit2_M <- eBayes(fit1_M)
+
+#repeat the linear model on the beta values to extract the effect size in beta
+fit1_B <- lmFit(B,
+                design)
+fit2_B <- eBayes(fit1_B)
+
+#extract the results for age
+coef = "age"
+results <- topTable(fit2_M,
+                    coef=coef,
+                    number = Inf,
+                    p.value = 1)
+results_B <- topTable(fit2_B,
+                      coef=coef,
+                      number=Inf,
+                      p.value=1)
+results$logFC <- results_B[rownames(results),"logFC"] #effect size in beta values
+SE <- fit2_B$sigma * fit2_B$stdev.unscaled
+results$SE <- SE[rownames(results),coef]
+
+#save p-value histogram
+#Save p-value histogram
+tiff('GSE197676_pvalhist_DMPs.tiff',
+     width =5,
+     height = 3,
+     units = 'in',
+     res = 200)
+ggplot(results,
+       mapping = aes(x = `P.Value`))+
+  labs(title="Distribution of raw p-values for age DMPs",
+       x="p-value")+
+  geom_histogram(color="darkblue",
+                 fill="lightblue",bins = 30)
+dev.off()
+
+#check the number of sig DMPs in the dataset
+fdr = 0.005
+results_age=topTable(fit2_M,
+                     coef = "age",
+                     number = nrow(M),
+                     adjust.method = "BH",
+                     p.value = fdr)
+#save the results as a table to run the meta-analysis
+directory = "/pvol/EWAS/Blood/DMPs"
+create_summary(toptable = results,
+               dataset_label = "GSE197676",
+               directory = directory)
+
+#save the residuals to run the Breusch-Pagan test for VMPs
+resid <- residuals(fit2_M, M)
+write.table(signif(resid,digits = 4),
+            file="GSE197676_M_res.txt",
+            quote = FALSE,
+            row.names = TRUE,
+            col.names = TRUE,
+            sep="\t")
+
+#check to see if limma worked
+
+
+cpg <-rownames(results)[1]
+pheno_with_meth <- cbind(pheno, meth= as.numeric(B[cpg,]))
+tiff('GSE197676_DMP_check.tiff',
+     width =5,
+     height = 3,
+     units = 'in',
+     res = 200)
+ggplot(pheno_with_meth, aes(x=age, y=meth)) +
+  geom_jitter(width = 0.06)+
+  labs(y=paste("Methylation at",cpg))
+dev.off()
+
+#repeat for remaining datasets 
+
 #### formatting files for METAL ####
 
 #### This is just to explain how the files were formatted before the meta-analysis was run. We cannot provide the raw data for each dataset so skip this step 
