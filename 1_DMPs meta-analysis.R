@@ -6,7 +6,7 @@
 path = 'pvol/Preprocessing/Blood/GEO/GSE197676'
 setwd(path)
 
-lbrary(tidyverse)
+library(tidyverse)
 library(limma)
 
 #Identify DMPs in each dataset
